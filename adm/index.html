@@ -1,0 +1,662 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>BEU Vision — Content Console</title>
+
+<script src="https://cdn.tailwindcss.com"></script>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+
+<script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-app-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-auth-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-database-compat.js"></script>
+
+<style>
+  :root{
+    --ink:#0f172a;
+    --ink-soft:#475569;
+    --paper:#f7f6f2;
+    --card:#ffffff;
+    --line:#e7e4db;
+    --brand:#1361d6;
+    --brand-ink:#0d3f8f;
+    --amber:#e8890c;
+    --amber-ink:#a35c05;
+  }
+  html,body{ background:var(--paper); font-family:'Inter',ui-sans-serif,system-ui; color:var(--ink); }
+  .font-mono{ font-family:'JetBrains Mono', ui-monospace, monospace; }
+  .stub{
+    background:
+      radial-gradient(circle at 0 50%, var(--paper) 6px, transparent 6.5px),
+      radial-gradient(circle at 100% 50%, var(--paper) 6px, transparent 6.5px);
+  }
+  .card{ background:var(--card); border:1px solid var(--line); border-radius:14px; }
+  ::-webkit-scrollbar{ width:10px; height:10px; }
+  ::-webkit-scrollbar-thumb{ background:#d8d4c8; border-radius:8px; }
+  .field{
+    border:1px solid var(--line); border-radius:10px; padding:.55rem .75rem;
+    background:#fcfbf8; transition:border-color .15s, box-shadow .15s;
+  }
+  .field:focus{ outline:none; border-color:var(--brand); box-shadow:0 0 0 3px rgba(19,97,214,.12); background:#fff; }
+  .btn-primary{
+    background:var(--brand); color:#fff; font-weight:600; border-radius:10px;
+    padding:.65rem 1.15rem; transition:transform .12s ease, background .15s;
+  }
+  .btn-primary:hover{ background:var(--brand-ink); }
+  .btn-primary:active{ transform:scale(.98); }
+  .btn-primary:disabled{ opacity:.5; cursor:not-allowed; }
+  .btn-ghost{
+    border:1px solid var(--line); border-radius:10px; padding:.55rem 1rem; font-weight:500;
+    background:#fff; transition:border-color .15s, background .15s;
+  }
+  .btn-ghost:hover{ border-color:#c9c4b5; background:#fafaf7; }
+  .eyebrow{ font-size:.7rem; letter-spacing:.14em; font-weight:700; text-transform:uppercase; color:var(--ink-soft); }
+
+  /* Toast: positioning lives on the wrapper (plain fixed+flex, no Tailwind
+     transform utilities), so the show/hide transform on #toast itself is
+     never fought over by two different rules setting `transform`. */
+  .toast-wrap{
+    position:fixed; left:0; right:0; bottom:20px; z-index:50;
+    display:flex; justify-content:center; pointer-events:none;
+  }
+  .toast{
+    transform:translateY(120%);
+    opacity:0;
+    visibility:hidden;
+    transition:transform .35s cubic-bezier(.2,.9,.25,1), opacity .35s;
+    pointer-events:auto;
+  }
+  .toast.show{ transform:translateY(0); opacity:1; visibility:visible; }
+
+  /* Branch accordion */
+  details.branch-card > summary{ list-style:none; cursor:pointer; }
+  details.branch-card > summary::-webkit-details-marker{ display:none; }
+  details.branch-card .chevron{ transition:transform .18s ease; }
+  details.branch-card[open] .chevron{ transform:rotate(90deg); }
+  details.branch-card{ border:1px solid var(--line); border-radius:12px; background:#fcfbf8; }
+  details.branch-card + details.branch-card{ margin-top:.6rem; }
+
+  @media (prefers-reduced-motion: reduce){
+    *{ transition:none !important; animation:none !important; }
+  }
+</style>
+</head>
+<body class="min-h-screen">
+
+<!-- ===================== CONFIG ===================== -->
+<script>
+  // Firebase project config.
+  const firebaseConfig = {
+    apiKey: "AIzaSyACRMu_UkHnowxTpgPIrnS2min2O2N_LhY",
+    authDomain: "beu-vision.firebaseapp.com",
+    databaseURL: "https://beu-vision-default-rtdb.firebaseio.com",
+    projectId: "beu-vision",
+    storageBucket: "beu-vision.firebasestorage.app",
+    messagingSenderId: "401950515540",
+    appId: "1:401950515540:web:6e5f6bed1048d2e1bea8c1"
+  };
+
+  // NOTE: Access control is enforced entirely by the Realtime Database
+  // security rules (rules.json), based on auth.uid. There is no client-side
+  // allow-list here — anyone can sign in and reach the editor UI, but only
+  // writes from an authorized uid will actually be accepted by Firebase.
+</script>
+<!-- ==================================================================== -->
+
+<!-- Top bar -->
+<header class="sticky top-0 z-30 border-b border-[var(--line)] bg-[var(--paper)]/90 backdrop-blur">
+  <div class="max-w-5xl mx-auto px-4 sm:px-5 py-3 sm:py-4 flex items-center justify-between gap-3">
+    <div class="flex items-center gap-2 sm:gap-3 min-w-0">
+      <div class="w-8 h-8 sm:w-9 sm:h-9 rounded-lg bg-[var(--brand)] text-white grid place-items-center font-extrabold shrink-0">B</div>
+      <div class="min-w-0">
+        <div class="font-extrabold leading-none text-sm sm:text-base truncate">BEU Vision</div>
+        <div class="eyebrow leading-none mt-1 truncate">Content Console</div>
+      </div>
+    </div>
+    <div id="authArea" class="flex items-center gap-2 sm:gap-3 shrink-0"></div>
+  </div>
+</header>
+
+<!-- Gate: signed out -->
+<main id="signedOutView" class="max-w-md mx-auto mt-16 sm:mt-24 px-4 sm:px-5 text-center hidden">
+  <div class="eyebrow mb-3">Restricted access</div>
+  <h1 class="text-xl sm:text-2xl font-extrabold mb-2">Sign in to edit</h1>
+  <p class="text-[var(--ink-soft)] mb-6 text-sm sm:text-base">Only authorized accounts can publish changes. Everyone else can still read the live data as usual.</p>
+  <button id="signInBtn" class="btn-primary w-full">Continue with Google</button>
+</main>
+
+<!-- Gate: signed in, not authorized (write rejected by database rules) -->
+<main id="notAuthorizedView" class="max-w-md mx-auto mt-16 sm:mt-24 px-4 sm:px-5 text-center hidden">
+  <div class="eyebrow mb-3 text-red-600">Access denied</div>
+  <h1 class="text-xl sm:text-2xl font-extrabold mb-2">This account can't publish</h1>
+  <p class="text-[var(--ink-soft)] mb-3 text-sm sm:text-base">Signed in as <span id="deniedEmail" class="font-mono break-all"></span>. The database rejected a write from this account.</p>
+  <p class="text-[var(--ink-soft)] mb-6 text-sm sm:text-base">Give this uid to an admin to add to the database rules:<br><span id="deniedUid" class="font-mono text-xs bg-[#fcfbf8] border border-[var(--line)] rounded-lg px-2 py-1 inline-block mt-2 break-all"></span></p>
+  <button id="signOutBtn2" class="btn-ghost">Sign out</button>
+</main>
+
+<!-- Editor -->
+<main id="editorView" class="max-w-5xl mx-auto px-4 sm:px-5 py-6 sm:py-8 hidden">
+
+  <!-- Version stub -->
+  <div class="card stub flex flex-col sm:flex-row sm:items-center justify-between gap-3 px-5 sm:px-6 py-4 mb-6 sm:mb-8">
+    <div>
+      <div class="eyebrow">Live dataset version</div>
+      <div class="text-2xl sm:text-3xl font-extrabold font-mono" id="versionDisplay">—</div>
+    </div>
+    <div class="sm:text-right">
+      <div class="eyebrow">On publish</div>
+      <div class="text-sm text-[var(--ink-soft)]">version becomes <span id="nextVersionDisplay" class="font-mono font-semibold text-[var(--ink)]">—</span></div>
+    </div>
+  </div>
+
+  <div class="grid gap-4 sm:gap-6">
+
+    <!-- Branches -->
+    <section class="card p-4 sm:p-6">
+      <div class="flex items-baseline justify-between mb-1">
+        <h2 class="font-bold text-lg">Branches &amp; syllabus</h2>
+        <span class="eyebrow">app / branches</span>
+      </div>
+      <p class="text-sm text-[var(--ink-soft)] mb-3">Click a course to expand it, then fill in the PDF link for each semester. Semester count is set automatically for known courses.</p>
+      <div id="branchesContainer" class="grid gap-0"></div>
+      <button id="addBranchBtn" type="button" class="btn-ghost text-sm mt-3">+ Add course</button>
+      <p id="branchesError" class="text-sm text-red-600 mt-2 hidden"></p>
+    </section>
+
+    <!-- Holidays -->
+    <section class="card p-4 sm:p-6">
+      <div class="flex items-baseline justify-between mb-1">
+        <h2 class="font-bold text-lg">Holiday list image</h2>
+        <span class="eyebrow">app / holidays</span>
+      </div>
+      <p class="text-sm text-[var(--ink-soft)] mb-3">Direct image URL shown in the app's holidays screen.</p>
+      <input id="holidaysInput" type="text" placeholder="https://…" class="field font-mono text-sm w-full" />
+    </section>
+
+    <!-- Social -->
+    <section class="card p-4 sm:p-6">
+      <div class="flex items-baseline justify-between mb-1">
+        <h2 class="font-bold text-lg">Social links</h2>
+        <span class="eyebrow">social</span>
+      </div>
+      <div class="grid sm:grid-cols-3 gap-3 mt-3">
+        <div>
+          <label class="text-xs font-medium text-[var(--ink-soft)]">WhatsApp</label>
+          <input id="whatsappInput" type="text" class="field w-full mt-1 text-sm" placeholder="https://chat.whatsapp.com/…" />
+        </div>
+        <div>
+          <label class="text-xs font-medium text-[var(--ink-soft)]">Telegram</label>
+          <input id="telegramInput" type="text" class="field w-full mt-1 text-sm" placeholder="https://t.me/…" />
+        </div>
+        <div>
+          <label class="text-xs font-medium text-[var(--ink-soft)]">YouTube</label>
+          <input id="youtubeInput" type="text" class="field w-full mt-1 text-sm" placeholder="https://youtube.com/@…" />
+        </div>
+      </div>
+    </section>
+
+    <!-- Thanks -->
+    <section class="card p-4 sm:p-6">
+      <div class="flex items-baseline justify-between mb-1">
+        <h2 class="font-bold text-lg">Thanks screen</h2>
+        <span class="eyebrow">thanks</span>
+      </div>
+      <div class="grid sm:grid-cols-2 gap-3 mt-3">
+        <div>
+          <label class="text-xs font-medium text-[var(--ink-soft)]">Rate app link</label>
+          <input id="rateAppInput" type="text" class="field w-full mt-1 text-sm" placeholder="https://play.google.com/store/apps/details?id=…" />
+        </div>
+        <div>
+          <label class="text-xs font-medium text-[var(--ink-soft)]">Check update link</label>
+          <input id="checkUpdateInput" type="text" class="field w-full mt-1 text-sm" placeholder="https://…" />
+        </div>
+      </div>
+    </section>
+
+    <!-- Share -->
+    <section class="card p-4 sm:p-6">
+      <div class="flex items-baseline justify-between mb-1">
+        <h2 class="font-bold text-lg">Share message</h2>
+        <span class="eyebrow">share</span>
+      </div>
+      <div class="grid gap-3 mt-3">
+        <div>
+          <label class="text-xs font-medium text-[var(--ink-soft)]">Title</label>
+          <input id="shareTitleInput" type="text" class="field w-full mt-1 text-sm" />
+        </div>
+        <div>
+          <label class="text-xs font-medium text-[var(--ink-soft)]">Link</label>
+          <input id="shareLinkInput" type="text" class="field w-full mt-1 text-sm" placeholder="https://play.google.com/store/apps/details?id=…" />
+        </div>
+      </div>
+    </section>
+
+    <!-- Ads -->
+    <section class="card p-4 sm:p-6">
+      <div class="flex items-baseline justify-between mb-1">
+        <h2 class="font-bold text-lg">AdMob</h2>
+        <span class="eyebrow">ads</span>
+      </div>
+      <label class="flex items-center gap-2 mt-3 mb-4 text-sm font-medium">
+        <input id="adsVisibleInput" type="checkbox" class="w-4 h-4 rounded border-[var(--line)]" />
+        Ads are visible in the app
+      </label>
+      <div class="grid sm:grid-cols-3 gap-3">
+        <div>
+          <label class="text-xs font-medium text-[var(--ink-soft)]">App ID</label>
+          <input id="admobAppIdInput" type="text" class="field font-mono w-full mt-1 text-sm" />
+        </div>
+        <div>
+          <label class="text-xs font-medium text-[var(--ink-soft)]">Banner unit ID</label>
+          <input id="bannerIdInput" type="text" class="field font-mono w-full mt-1 text-sm" />
+        </div>
+        <div>
+          <label class="text-xs font-medium text-[var(--ink-soft)]">Interstitial unit ID</label>
+          <input id="interstitialIdInput" type="text" class="field font-mono w-full mt-1 text-sm" />
+        </div>
+      </div>
+    </section>
+
+  </div>
+
+  <!-- Publish bar -->
+  <div class="sticky bottom-3 sm:bottom-5 mt-6 sm:mt-8">
+    <div class="card flex flex-col sm:flex-row sm:items-center justify-between gap-3 px-4 sm:px-5 py-4 shadow-lg shadow-black/5">
+      <div class="text-xs sm:text-sm text-[var(--ink-soft)]">
+        Publishing writes every section above in one update and raises the version number.
+      </div>
+      <div class="flex items-center gap-3">
+        <span id="savingStatus" class="text-sm text-[var(--ink-soft)]"></span>
+        <button id="publishBtn" class="btn-primary w-full sm:w-auto">Publish update</button>
+      </div>
+    </div>
+  </div>
+</main>
+
+<!-- Toast -->
+<div class="toast-wrap">
+  <div id="toast" class="toast card px-4 sm:px-5 py-3 text-sm font-medium shadow-lg mx-4 max-w-[calc(100%-2rem)] sm:max-w-md text-center"></div>
+</div>
+
+<script>
+  firebase.initializeApp(firebaseConfig);
+  const auth = firebase.auth();
+  const db = firebase.database();
+
+  const $ = (id) => document.getElementById(id);
+  const views = {
+    signedOut: $("signedOutView"),
+    notAuthorized: $("notAuthorizedView"),
+    editor: $("editorView"),
+  };
+  function showOnly(view){
+    Object.values(views).forEach(v => v.classList.add("hidden"));
+    view.classList.remove("hidden");
+  }
+
+  function toast(msg, isError){
+    const t = $("toast");
+    t.textContent = msg;
+    t.style.borderColor = isError ? "#dc2626" : "var(--line)";
+    t.style.color = isError ? "#dc2626" : "var(--ink)";
+    t.classList.add("show");
+    clearTimeout(toast._h);
+    toast._h = setTimeout(()=> t.classList.remove("show"), 3200);
+  }
+
+  // Firebase's permission-denied error code, used to detect a write rejected
+  // by the database rules (as opposed to a network/other failure).
+  function isPermissionDenied(e){
+    return e && (e.code === "PERMISSION_DENIED" || /permission[_ ]denied/i.test(e.message || ""));
+  }
+
+  // ---------- Branches & syllabus (accordion) ----------
+
+  // Known courses and how many semesters they have. Anything not listed
+  // here defaults to 8. Matching is case-insensitive on the branch title.
+  const SEM_COUNT_MAP = {
+    "instrumentation engineering": 3,
+    "chemical engineering": 3,
+    "food processing & preservation": 3,
+    "aeronautical engineering": 5,
+    "fire tech. and safety": 5,
+    "biomedical and robotics": 4,
+  };
+  const DEFAULT_SEM_COUNT = 8;
+  function defaultSemCount(title){
+    const key = (title || "").trim().toLowerCase();
+    return SEM_COUNT_MAP[key] || DEFAULT_SEM_COUNT;
+  }
+
+  // Working state: { branchKey: { title, semCount, manualSemCount, sems: { sem1: pdfLink, ... } } }
+  let branchesState = {};
+
+  function branchKeyNumber(key){
+    const m = /branch_(\d+)/.exec(key || "");
+    return m ? parseInt(m[1], 10) : 0;
+  }
+
+  function nextBranchKey(){
+    let max = 0;
+    Object.keys(branchesState).forEach(k => { max = Math.max(max, branchKeyNumber(k)); });
+    return "branch_" + (max + 1);
+  }
+
+  // Convert loaded Firebase data -> branchesState
+  function branchesFromData(branchesObj){
+    const out = {};
+    Object.keys(branchesObj || {}).forEach(key => {
+      const b = branchesObj[key] || {};
+      const syllabus = b.syllabus || {};
+      const semKeys = Object.keys(syllabus).sort((a, c) => {
+        const na = parseInt((/\d+/.exec(a) || ["0"])[0], 10);
+        const nc = parseInt((/\d+/.exec(c) || ["0"])[0], 10);
+        return na - nc;
+      });
+      const semCount = semKeys.length || defaultSemCount(b.title);
+      const sems = {};
+      for (let i = 1; i <= semCount; i++){
+        const semKey = "sem" + i;
+        sems[semKey] = (syllabus[semKey] && syllabus[semKey].pdfLink) || "";
+      }
+      out[key] = {
+        title: b.title || "",
+        semCount: semCount,
+        manualSemCount: semCount !== defaultSemCount(b.title),
+        sems: sems,
+      };
+    });
+    return out;
+  }
+
+  // Convert branchesState -> the object shape Firebase expects
+  function branchesToData(){
+    const out = {};
+    Object.keys(branchesState).forEach(key => {
+      const b = branchesState[key];
+      const syllabus = {};
+      for (let i = 1; i <= b.semCount; i++){
+        const semKey = "sem" + i;
+        syllabus[semKey] = {
+          semester: "Semester " + i,
+          pdfLink: (b.sems[semKey] || "").trim(),
+        };
+      }
+      out[key] = { title: b.title.trim(), syllabus: syllabus };
+    });
+    return out;
+  }
+
+  function resizeSems(branch, newCount){
+    const sems = {};
+    for (let i = 1; i <= newCount; i++){
+      const semKey = "sem" + i;
+      sems[semKey] = branch.sems[semKey] || "";
+    }
+    branch.sems = sems;
+    branch.semCount = newCount;
+  }
+
+  function renderBranches(){
+    const container = $("branchesContainer");
+    container.innerHTML = "";
+    const keys = Object.keys(branchesState).sort((a, b) => branchKeyNumber(a) - branchKeyNumber(b));
+    keys.forEach(key => container.appendChild(buildBranchCard(key)));
+  }
+
+  function buildBranchCard(key){
+    const branch = branchesState[key];
+
+    const details = document.createElement("details");
+    details.className = "branch-card p-3 sm:p-4";
+    details.dataset.key = key;
+
+    const summary = document.createElement("summary");
+    summary.className = "flex items-center justify-between gap-2 sm:gap-3 flex-wrap";
+    summary.innerHTML = `
+      <span class="flex items-center gap-2 min-w-0">
+        <svg class="chevron w-4 h-4 shrink-0 text-[var(--ink-soft)]" viewBox="0 0 20 20" fill="currentColor"><path fill-rule="evenodd" d="M7.05 4.05a1 1 0 011.414 0l4.243 4.243a1 1 0 010 1.414l-4.243 4.243a1 1 0 01-1.414-1.414L10.586 9 7.05 5.464a1 1 0 010-1.414z" clip-rule="evenodd"/></svg>
+        <span class="font-semibold truncate branch-title-label">${branch.title || "(untitled course)"}</span>
+        <span class="eyebrow shrink-0">${key} · ${branch.semCount} sem</span>
+      </span>
+      <button type="button" class="remove-branch-btn text-xs text-red-600 hover:underline shrink-0">Remove</button>
+    `;
+    details.appendChild(summary);
+
+    const body = document.createElement("div");
+    body.className = "mt-4 grid gap-4";
+
+    // Title + semester count row
+    const row = document.createElement("div");
+    row.className = "grid sm:grid-cols-[1fr_140px] gap-3";
+    row.innerHTML = `
+      <div>
+        <label class="text-xs font-medium text-[var(--ink-soft)]">Course title</label>
+        <input type="text" class="field w-full mt-1 text-sm branch-title-input" value="${escapeHtml(branch.title)}" placeholder="e.g. Civil Engineering" />
+      </div>
+      <div>
+        <label class="text-xs font-medium text-[var(--ink-soft)]">Semesters</label>
+        <input type="number" min="1" max="12" class="field w-full mt-1 text-sm branch-semcount-input" value="${branch.semCount}" />
+      </div>
+    `;
+    body.appendChild(row);
+
+    // Semester inputs
+    const semGrid = document.createElement("div");
+    semGrid.className = "grid gap-2 branch-sem-grid";
+    body.appendChild(semGrid);
+    renderSemInputs(semGrid, branch);
+
+    details.appendChild(body);
+
+    // ---- listeners ----
+    summary.querySelector(".remove-branch-btn").addEventListener("click", (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+      delete branchesState[key];
+      renderBranches();
+    });
+
+    const titleInput = row.querySelector(".branch-title-input");
+    const semCountInput = row.querySelector(".branch-semcount-input");
+    const titleLabel = summary.querySelector(".branch-title-label");
+    const metaLabel = summary.querySelector(".eyebrow");
+
+    titleInput.addEventListener("input", () => {
+      branch.title = titleInput.value;
+      titleLabel.textContent = branch.title || "(untitled course)";
+      // Auto-adjust semester count for known course names, unless the
+      // admin has manually overridden it for this branch.
+      if (!branch.manualSemCount) {
+        const suggested = defaultSemCount(branch.title);
+        if (suggested !== branch.semCount) {
+          resizeSems(branch, suggested);
+          semCountInput.value = branch.semCount;
+          metaLabel.textContent = key + " · " + branch.semCount + " sem";
+          renderSemInputs(semGrid, branch);
+        }
+      }
+    });
+
+    semCountInput.addEventListener("input", () => {
+      const n = Math.max(1, Math.min(12, parseInt(semCountInput.value, 10) || 1));
+      branch.manualSemCount = true;
+      resizeSems(branch, n);
+      metaLabel.textContent = key + " · " + branch.semCount + " sem";
+      renderSemInputs(semGrid, branch);
+    });
+
+    return details;
+  }
+
+  function renderSemInputs(semGrid, branch){
+    semGrid.innerHTML = "";
+    for (let i = 1; i <= branch.semCount; i++){
+      const semKey = "sem" + i;
+      const row = document.createElement("div");
+      row.className = "grid grid-cols-[76px_1fr] sm:grid-cols-[90px_1fr] items-center gap-2";
+      row.innerHTML = `
+        <label class="text-xs font-medium text-[var(--ink-soft)]">Semester ${i}</label>
+        <input type="text" class="field w-full text-sm font-mono sem-link-input" placeholder="https://…" value="${escapeHtml(branch.sems[semKey] || "")}" />
+      `;
+      row.querySelector(".sem-link-input").addEventListener("input", (e) => {
+        branch.sems[semKey] = e.target.value;
+      });
+      semGrid.appendChild(row);
+    }
+  }
+
+  function escapeHtml(str){
+    return String(str || "").replace(/[&<>"']/g, c => ({
+      "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;"
+    }[c]));
+  }
+
+  $("addBranchBtn").addEventListener("click", () => {
+    const key = nextBranchKey();
+    branchesState[key] = {
+      title: "",
+      semCount: DEFAULT_SEM_COUNT,
+      manualSemCount: false,
+      sems: {},
+    };
+    for (let i = 1; i <= DEFAULT_SEM_COUNT; i++) branchesState[key].sems["sem" + i] = "";
+    renderBranches();
+    // Open and scroll to the newly added card
+    const el = document.querySelector(`details.branch-card[data-key="${key}"]`);
+    if (el) { el.open = true; el.scrollIntoView({ behavior: "smooth", block: "center" }); }
+  });
+
+  // ---------- Auth ----------
+  $("signInBtn").addEventListener("click", () => {
+    const provider = new firebase.auth.GoogleAuthProvider();
+    auth.signInWithPopup(provider).catch(e => toast(e.message, true));
+  });
+  $("signOutBtn2").addEventListener("click", () => auth.signOut());
+
+  auth.onAuthStateChanged(user => {
+    if (!user) {
+      $("authArea").innerHTML = "";
+      showOnly(views.signedOut);
+      return;
+    }
+    $("authArea").innerHTML = `
+      <img src="${user.photoURL || ''}" class="w-8 h-8 rounded-full border border-[var(--line)]" onerror="this.style.display='none'">
+      <span class="text-sm font-medium hidden sm:inline">${user.email}</span>
+      <button id="signOutBtn" class="btn-ghost text-sm py-1.5 px-3">Sign out</button>
+    `;
+    document.getElementById("signOutBtn").addEventListener("click", () => auth.signOut());
+
+    // No client-side email allow-list: everyone signed in sees the editor.
+    // Actual write permission is checked by attempting to publish; the
+    // database rules are the real gate (see rules.json).
+    showOnly(views.editor);
+    loadData();
+  });
+
+  // ---------- Load ----------
+  let currentVersion = 0;
+
+  function loadData(){
+    db.ref("/").once("value").then(snap => {
+      const data = snap.val() || {};
+      currentVersion = Number(data.version || 0);
+      $("versionDisplay").textContent = currentVersion;
+      $("nextVersionDisplay").textContent = currentVersion + 1;
+
+      const app = data.app || {};
+      branchesState = branchesFromData(app.branches || {});
+      renderBranches();
+      $("holidaysInput").value = app.holidays || "";
+
+      const social = data.social || {};
+      $("whatsappInput").value = social.whatsapp || "";
+      $("telegramInput").value = social.telegram || "";
+      $("youtubeInput").value = social.youtube || "";
+
+      const thanks = data.thanks || {};
+      $("rateAppInput").value = thanks.rateApp || "";
+      $("checkUpdateInput").value = thanks.checkUpdate || "";
+
+      const share = data.share || {};
+      $("shareTitleInput").value = share.title || "";
+      $("shareLinkInput").value = share.link || "";
+
+      const ads = data.ads || {};
+      $("adsVisibleInput").checked = !!ads.adsVisible;
+      $("admobAppIdInput").value = ads.admobAppId || "";
+      $("bannerIdInput").value = ads.bannerId || "";
+      $("interstitialIdInput").value = ads.interstitialId || "";
+    }).catch(e => toast("Couldn't load current data: " + e.message, true));
+  }
+
+  // ---------- Publish ----------
+  $("publishBtn").addEventListener("click", async () => {
+    $("branchesError").classList.add("hidden");
+
+    const missingTitle = Object.keys(branchesState).find(k => !branchesState[k].title.trim());
+    if (missingTitle) {
+      $("branchesError").textContent = "Course \"" + missingTitle + "\" is missing a title.";
+      $("branchesError").classList.remove("hidden");
+      const el = document.querySelector(`details.branch-card[data-key="${missingTitle}"]`);
+      if (el) { el.open = true; el.scrollIntoView({ behavior: "smooth", block: "center" }); }
+      return;
+    }
+
+    const branches = branchesToData();
+
+    const updates = {
+      "app/branches": branches,
+      "app/holidays": $("holidaysInput").value.trim(),
+      "social": {
+        whatsapp: $("whatsappInput").value.trim(),
+        telegram: $("telegramInput").value.trim(),
+        youtube: $("youtubeInput").value.trim(),
+      },
+      "thanks": {
+        rateApp: $("rateAppInput").value.trim(),
+        checkUpdate: $("checkUpdateInput").value.trim(),
+      },
+      "share": {
+        title: $("shareTitleInput").value.trim(),
+        link: $("shareLinkInput").value.trim(),
+      },
+      "ads": {
+        adsVisible: $("adsVisibleInput").checked,
+        admobAppId: $("admobAppIdInput").value.trim(),
+        bannerId: $("bannerIdInput").value.trim(),
+        interstitialId: $("interstitialIdInput").value.trim(),
+      },
+      "version": currentVersion + 1,
+    };
+
+    $("publishBtn").disabled = true;
+    $("savingStatus").textContent = "Publishing…";
+    try {
+      await db.ref().update(updates);
+      currentVersion += 1;
+      $("versionDisplay").textContent = currentVersion;
+      $("nextVersionDisplay").textContent = currentVersion + 1;
+      toast("Published — version " + currentVersion + " is live.");
+    } catch (e) {
+      if (isPermissionDenied(e)) {
+        // Database rules rejected the write for this uid — route to the
+        // "not authorized" screen instead of just toasting the error.
+        const user = auth.currentUser;
+        $("deniedEmail").textContent = user ? user.email : "";
+        $("deniedUid").textContent = user ? user.uid : "";
+        showOnly(views.notAuthorized);
+      } else {
+        toast("Publish failed: " + e.message, true);
+      }
+    } finally {
+      $("publishBtn").disabled = false;
+      $("savingStatus").textContent = "";
+    }
+  });
+</script>
+
+</body>
+</html>
