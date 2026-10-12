@@ -6,6 +6,7 @@
 <title>BEU Vision — Content Console</title>
 
 <script src="https://cdn.tailwindcss.com"></script>
+<script src="https://cdn.ckeditor.com/ckeditor5/41.4.2/classic/ckeditor.js"></script>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
 
@@ -39,6 +40,7 @@
     border:1px solid var(--line); border-radius:10px; padding:.55rem .75rem;
     background:#fcfbf8; transition:border-color .15s, box-shadow .15s;
   }
+  .field.subject-title-input{ background:#fff; }
   .field:focus{ outline:none; border-color:var(--brand); box-shadow:0 0 0 3px rgba(19,97,214,.12); background:#fff; }
   .btn-primary{
     background:var(--brand); color:#fff; font-weight:600; border-radius:10px;
@@ -77,6 +79,7 @@
   details.branch-card[open] .chevron{ transform:rotate(90deg); }
   details.branch-card{ border:1px solid var(--line); border-radius:12px; background:#fcfbf8; }
   details.branch-card + details.branch-card{ margin-top:.6rem; }
+  .ck-editor__editable_inline{ min-height:160px; background:#fff !important; }
 
   @media (prefers-reduced-motion: reduce){
     *{ transition:none !important; animation:none !important; }
@@ -159,7 +162,7 @@
         <h2 class="font-bold text-lg">Branches &amp; syllabus</h2>
         <span class="eyebrow">app / branches</span>
       </div>
-      <p class="text-sm text-[var(--ink-soft)] mb-3">Click a course to expand it, then fill in the PDF link for each semester. Semester count is set automatically for known courses.</p>
+      <p class="text-sm text-[var(--ink-soft)] mb-3">Click a course to expand it, then add subjects and write formatted syllabus content for each semester. Semester count is set automatically for known courses.</p>
       <div id="branchesContainer" class="grid gap-0"></div>
       <button id="addBranchBtn" type="button" class="btn-ghost text-sm mt-3">+ Add course</button>
       <p id="branchesError" class="text-sm text-red-600 mt-2 hidden"></p>
@@ -330,8 +333,9 @@
     return SEM_COUNT_MAP[key] || DEFAULT_SEM_COUNT;
   }
 
-  // Working state: { branchKey: { title, semCount, manualSemCount, sems: { sem1: pdfLink, ... } } }
+  // Working state: { branchKey: { title, semCount, manualSemCount, sems: { sem1: [{ title, content }], ... } } }
   let branchesState = {};
+  const editorInstances = new Map();
 
   function branchKeyNumber(key){
     const m = /branch_(\d+)/.exec(key || "");
@@ -359,7 +363,25 @@
       const sems = {};
       for (let i = 1; i <= semCount; i++){
         const semKey = "sem" + i;
-        sems[semKey] = (syllabus[semKey] && syllabus[semKey].pdfLink) || "";
+        const semester = syllabus[semKey] || {};
+        let subData = semester.subData || [];
+        if (!Array.isArray(subData)) {
+          subData = Object.keys(subData).sort((a, c) => Number(a) - Number(c)).map(index => subData[index]);
+        }
+        sems[semKey] = subData.map(subject => ({
+          title: subject && subject.title || "",
+          mode: subject && (subject.mode === "link" || (!subject.mode && subject.pdfLink)) ? "link" : "content",
+          content: subject && subject.content || "",
+          pdfLink: subject && subject.pdfLink || "",
+        }));
+        if (!sems[semKey].length && semester.pdfLink) {
+          sems[semKey].push({
+            title: "Course PDF",
+            mode: "link",
+            content: "",
+            pdfLink: String(semester.pdfLink),
+          });
+        }
       }
       out[key] = {
         title: b.title || "",
@@ -381,7 +403,18 @@
         const semKey = "sem" + i;
         syllabus[semKey] = {
           semester: "Semester " + i,
-          pdfLink: (b.sems[semKey] || "").trim(),
+          subData: (b.sems[semKey] || []).map(subject => {
+            const savedSubject = {
+              title: subject.title.trim(),
+              mode: subject.mode,
+            };
+            if (subject.mode === "link") {
+              savedSubject.pdfLink = subject.pdfLink.trim();
+            } else {
+              savedSubject.content = subject.content;
+            }
+            return savedSubject;
+          }),
         };
       }
       out[key] = { title: b.title.trim(), syllabus: syllabus };
@@ -393,7 +426,7 @@
     const sems = {};
     for (let i = 1; i <= newCount; i++){
       const semKey = "sem" + i;
-      sems[semKey] = branch.sems[semKey] || "";
+      sems[semKey] = branch.sems[semKey] || [];
     }
     branch.sems = sems;
     branch.semCount = newCount;
@@ -401,6 +434,7 @@
 
   function renderBranches(){
     const container = $("branchesContainer");
+    destroyEditorsWithin(container);
     container.innerHTML = "";
     const keys = Object.keys(branchesState).sort((a, b) => branchKeyNumber(a) - branchKeyNumber(b));
     keys.forEach(key => container.appendChild(buildBranchCard(key)));
@@ -418,11 +452,13 @@
     summary.innerHTML = `
       <span class="flex items-center gap-2 min-w-0">
         <svg class="chevron w-4 h-4 shrink-0 text-[var(--ink-soft)]" viewBox="0 0 20 20" fill="currentColor"><path fill-rule="evenodd" d="M7.05 4.05a1 1 0 011.414 0l4.243 4.243a1 1 0 010 1.414l-4.243 4.243a1 1 0 01-1.414-1.414L10.586 9 7.05 5.464a1 1 0 010-1.414z" clip-rule="evenodd"/></svg>
-        <span class="font-semibold truncate branch-title-label">${branch.title || "(untitled course)"}</span>
-        <span class="eyebrow shrink-0">${key} · ${branch.semCount} sem</span>
+        <span class="font-semibold truncate branch-title-label"></span>
+        <span class="eyebrow shrink-0 branch-meta-label"></span>
       </span>
       <button type="button" class="remove-branch-btn text-xs text-red-600 hover:underline shrink-0">Remove</button>
     `;
+    summary.querySelector(".branch-title-label").textContent = branch.title || "(untitled course)";
+    summary.querySelector(".branch-meta-label").textContent = key + " · " + branch.semCount + " sem";
     details.appendChild(summary);
 
     const body = document.createElement("div");
@@ -434,13 +470,14 @@
     row.innerHTML = `
       <div>
         <label class="text-xs font-medium text-[var(--ink-soft)]">Course title</label>
-        <input type="text" class="field w-full mt-1 text-sm branch-title-input" value="${escapeHtml(branch.title)}" placeholder="e.g. Civil Engineering" />
+        <input type="text" class="field w-full mt-1 text-sm branch-title-input" placeholder="e.g. Civil Engineering" />
       </div>
       <div>
         <label class="text-xs font-medium text-[var(--ink-soft)]">Semesters</label>
         <input type="number" min="1" max="12" class="field w-full mt-1 text-sm branch-semcount-input" value="${branch.semCount}" />
       </div>
     `;
+    row.querySelector(".branch-title-input").value = branch.title;
     body.appendChild(row);
 
     // Semester inputs
@@ -492,20 +529,151 @@
   }
 
   function renderSemInputs(semGrid, branch){
+    destroyEditorsWithin(semGrid);
     semGrid.innerHTML = "";
     for (let i = 1; i <= branch.semCount; i++){
       const semKey = "sem" + i;
-      const row = document.createElement("div");
-      row.className = "grid grid-cols-[76px_1fr] sm:grid-cols-[90px_1fr] items-center gap-2";
-      row.innerHTML = `
-        <label class="text-xs font-medium text-[var(--ink-soft)]">Semester ${i}</label>
-        <input type="text" class="field w-full text-sm font-mono sem-link-input" placeholder="https://…" value="${escapeHtml(branch.sems[semKey] || "")}" />
-      `;
-      row.querySelector(".sem-link-input").addEventListener("input", (e) => {
-        branch.sems[semKey] = e.target.value;
+      const panel = document.createElement("section");
+      panel.className = "semester-panel rounded-xl border border-[var(--line)] bg-white p-3 sm:p-4";
+      panel.dataset.semester = semKey;
+
+      const header = document.createElement("div");
+      header.className = "flex items-center justify-between gap-3 mb-3";
+      const heading = document.createElement("h3");
+      heading.className = "font-semibold text-sm";
+      heading.textContent = "Semester " + i;
+      const addSubjectButton = document.createElement("button");
+      addSubjectButton.type = "button";
+      addSubjectButton.className = "btn-ghost text-xs px-3 py-1.5";
+      addSubjectButton.textContent = "+ Add subject";
+
+      const subjectsContainer = document.createElement("div");
+      subjectsContainer.className = "grid gap-3";
+      addSubjectButton.addEventListener("click", () => {
+        branch.sems[semKey].push({ title: "", mode: "content", content: "", pdfLink: "" });
+        renderSubjectInputs(subjectsContainer, branch.sems[semKey]);
       });
-      semGrid.appendChild(row);
+      header.append(heading, addSubjectButton);
+      panel.append(header, subjectsContainer);
+      semGrid.appendChild(panel);
+      renderSubjectInputs(subjectsContainer, branch.sems[semKey]);
     }
+  }
+
+  function renderSubjectInputs(container, subjects){
+    destroyEditorsWithin(container);
+    container.innerHTML = "";
+    subjects.forEach((subject, index) => {
+      const card = document.createElement("div");
+      card.className = "rounded-lg border border-[var(--line)] bg-[#fcfbf8] p-3";
+
+      const top = document.createElement("div");
+      top.className = "flex items-end gap-2 mb-3";
+      const titleWrap = document.createElement("div");
+      titleWrap.className = "flex-1";
+      const titleLabel = document.createElement("label");
+      titleLabel.className = "text-xs font-medium text-[var(--ink-soft)]";
+      titleLabel.textContent = "Subject title";
+      const titleInput = document.createElement("input");
+      titleInput.type = "text";
+      titleInput.className = "field subject-title-input w-full mt-1 text-sm";
+      titleInput.placeholder = "e.g. Engineering Mathematics";
+      titleInput.value = subject.title;
+      titleInput.addEventListener("input", () => { subject.title = titleInput.value; });
+      titleWrap.append(titleLabel, titleInput);
+
+      const modeWrap = document.createElement("div");
+      modeWrap.className = "w-36 shrink-0";
+      const modeLabel = document.createElement("label");
+      modeLabel.className = "text-xs font-medium text-[var(--ink-soft)]";
+      modeLabel.textContent = "Mode";
+      const modeSelect = document.createElement("select");
+      modeSelect.className = "field w-full mt-1 text-sm";
+      modeSelect.innerHTML = '<option value="content">Content</option><option value="link">PDF link</option>';
+      modeSelect.value = subject.mode === "link" ? "link" : "content";
+      modeWrap.append(modeLabel, modeSelect);
+
+      const removeButton = document.createElement("button");
+      removeButton.type = "button";
+      removeButton.className = "btn-ghost text-xs text-red-600 px-3 py-2";
+      removeButton.textContent = "Remove";
+      removeButton.addEventListener("click", () => {
+        subjects.splice(index, 1);
+        renderSubjectInputs(container, subjects);
+      });
+      top.append(titleWrap, modeWrap, removeButton);
+
+      const editorArea = document.createElement("div");
+      card.append(top, editorArea);
+      container.appendChild(card);
+
+      const renderModeInput = () => {
+        destroyEditorsWithin(editorArea);
+        editorArea.replaceChildren();
+        subject.mode = modeSelect.value;
+        if (subject.mode === "link") {
+          const linkLabel = document.createElement("label");
+          linkLabel.className = "text-xs font-medium text-[var(--ink-soft)] block mb-1";
+          linkLabel.textContent = "PDF URL";
+          const linkInput = document.createElement("input");
+          linkInput.type = "url";
+          linkInput.className = "field w-full text-sm";
+          linkInput.placeholder = "https://example.edu/public/course.pdf";
+          linkInput.value = subject.pdfLink;
+          linkInput.addEventListener("input", () => { subject.pdfLink = linkInput.value; });
+          editorArea.append(linkLabel, linkInput);
+          return;
+        }
+
+        const contentLabel = document.createElement("label");
+        contentLabel.className = "text-xs font-medium text-[var(--ink-soft)] block mb-1";
+        contentLabel.textContent = "Syllabus content";
+        const editorHost = document.createElement("div");
+        const textarea = document.createElement("textarea");
+        textarea.value = subject.content;
+        editorHost.appendChild(textarea);
+        editorArea.append(contentLabel, editorHost);
+
+        if (typeof ClassicEditor === "undefined") {
+          enableTextareaFallback(textarea, editorHost, subject, "Rich-text editor couldn't be loaded. Check your connection and reload this page.");
+        } else {
+          ClassicEditor.create(textarea).then(editor => {
+            if (!editorHost.isConnected) {
+              return editor.destroy();
+            }
+            editorInstances.set(editorHost, editor);
+            editor.model.document.on("change:data", () => {
+              subject.content = editor.getData();
+            });
+          }).catch(error => {
+            if (editorHost.isConnected) {
+              enableTextareaFallback(textarea, editorHost, subject, "Couldn't initialize the rich-text editor: " + error.message);
+            }
+          });
+        }
+      };
+      modeSelect.addEventListener("change", renderModeInput);
+      renderModeInput();
+    });
+  }
+
+  function enableTextareaFallback(textarea, editorHost, subject, message){
+    editorHost.replaceChildren(textarea);
+    textarea.className = "field w-full text-sm";
+    textarea.rows = 8;
+    textarea.addEventListener("input", () => { subject.content = textarea.value; });
+    toast(message, true);
+  }
+
+  function destroyEditorsWithin(container){
+    editorInstances.forEach((editor, editorHost) => {
+      if (container.contains(editorHost)) {
+        editorInstances.delete(editorHost);
+        editor.destroy().catch(error => {
+          toast("Couldn't close a syllabus editor: " + error.message, true);
+        });
+      }
+    });
   }
 
   function escapeHtml(str){
@@ -522,7 +690,7 @@
       manualSemCount: false,
       sems: {},
     };
-    for (let i = 1; i <= DEFAULT_SEM_COUNT; i++) branchesState[key].sems["sem" + i] = "";
+    for (let i = 1; i <= DEFAULT_SEM_COUNT; i++) branchesState[key].sems["sem" + i] = [];
     renderBranches();
     // Open and scroll to the newly added card
     const el = document.querySelector(`details.branch-card[data-key="${key}"]`);
@@ -605,6 +773,45 @@
       return;
     }
 
+    const missingSubject = Object.keys(branchesState).map(key => {
+      const branch = branchesState[key];
+      for (let i = 1; i <= branch.semCount; i++) {
+        const subjects = branch.sems["sem" + i] || [];
+        const subjectIndex = subjects.findIndex(subject =>
+          !subject.title.trim() ||
+          (subject.mode === "link" && !isHttpUrl(subject.pdfLink))
+        );
+        if (subjectIndex !== -1) {
+          const subject = subjects[subjectIndex];
+          return {
+            key,
+            semester: i,
+            subjectIndex,
+            mode: subject.mode,
+            missingTitle: !subject.title.trim(),
+          };
+        }
+      }
+      return null;
+    }).find(Boolean);
+    if (missingSubject) {
+      $("branchesError").textContent = missingSubject.missingTitle
+        ? "Add a title to every subject, or remove the empty subject in Semester " + missingSubject.semester + "."
+        : "Enter a valid HTTP(S) PDF link for the subject in Semester " + missingSubject.semester + ".";
+      $("branchesError").classList.remove("hidden");
+      const branchCard = document.querySelector(`details.branch-card[data-key="${missingSubject.key}"]`);
+      if (branchCard) {
+        branchCard.open = true;
+        const subjectCard = branchCard.querySelector(`[data-semester="sem${missingSubject.semester}"] .rounded-lg.border`);
+        const input = subjectCard && subjectCard.querySelector(missingSubject.missingTitle ? 'input[type="text"]' : 'input[type="url"]');
+        if (input) {
+          input.focus();
+          input.scrollIntoView({ behavior: "smooth", block: "center" });
+        }
+      }
+      return;
+    }
+
     const branches = branchesToData();
 
     const updates = {
@@ -656,6 +863,15 @@
       $("savingStatus").textContent = "";
     }
   });
+
+  function isHttpUrl(value){
+    try {
+      const url = new URL(String(value || "").trim());
+      return url.protocol === "http:" || url.protocol === "https:";
+    } catch (e) {
+      return false;
+    }
+  }
 </script>
 
 </body>
